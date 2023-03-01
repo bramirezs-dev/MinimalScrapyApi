@@ -3,11 +3,11 @@ using System.Text.Json;
 using HtmlAgilityPack;
 using System.Net.Cache;
 using Microsoft.Extensions.Caching.Memory;
+using MinimalScrapyApi.DTOs;
+using MinimalScrapyApi.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddMemoryCache(options => {
-    MemoryCacheEntryOptions cacheEntryOptions 
-});
+builder.Services.AddMemoryCache();
 var app = builder.Build();
 
 app.MapGet("/", () => "Hello World!");
@@ -17,13 +17,18 @@ app.MapGet("/jujutsu-no-kaisen", GetJujutsuNoKaisen);
 app.Run();
 
 
-static async Task<List<Data>> GetJujutsuNoKaisen(IMemoryCache memory){
+static async Task<List<JujutsuKaisenDTO>> GetJujutsuNoKaisen(IMemoryCache memory){
     
+    var existInMemory = memory.Get<List<JujutsuKaisenDTO>>("hierarchy");
+    if (existInMemory != null)
+    {
+        return existInMemory;
+    }
 
     var stringHtml = await GetToHtml("https://jujutsu-kaisen.fandom.com/es/wiki/Lista_de_Personajes#Manga");
     var nodesHtml  = GetInformationScrapy(stringHtml,"//div[@class='tabbig']/div/div[@class='wds-tab__content wds-is-current']");
     
-    var response = new List<Data>();
+    var response = new List<JujutsuKaisenDTO>();
 
     var cleanData = nodesHtml[0].ChildNodes.Where( child=> child.Name != "#text" && child.Name != "p" ).ToList();
 
@@ -45,14 +50,11 @@ static async Task<List<Data>> GetJujutsuNoKaisen(IMemoryCache memory){
             var data = Valid(range);
             response.Add(data);
         }
-        
     }
-    var cacheEntryOptions = new MemoryCacheEntryOptions().AbsoluteExpiration=DateTime.Now.AddMinutes(1);¡
-    memory.Set<List<Data>>("hierarchy",response);
     
+    memory.AddKey<List<JujutsuKaisenDTO>>("hierarchy",response,DateTime.Now.AddMinutes(1));
     return response;
 }
-
 
 static async Task<string> GetToHtml(string url)
 {
@@ -69,55 +71,30 @@ static HtmlNodeCollection GetInformationScrapy(string page,string queryXpath){
     return queryHtmlNodeCollection;
 }
 
-static Data Valid (List<HtmlNode> node, int index = 0){
-     var result = new Data();
-     result.Secondaries = new List<Secondary>();
-     result.Main = node[index].InnerText.Replace("\n",String.Empty);
+static JujutsuKaisenDTO Valid (List<HtmlNode> node, int index = 0){
+     var result = new JujutsuKaisenDTO();
+     result.Categories = new List<CategoryDTO>();
+     result.MainCategory = node[index].InnerText.Replace("\n",String.Empty);
 
-     var secondary = String.Empty;
+     var category = String.Empty;
      foreach (var item in node.SkipLast(index))
      {
         if(item.Name == "table"){
-            secondary = item.InnerText.Replace("\n",String.Empty);
+            category = item.InnerText.Replace("\n",String.Empty);
             continue;
         }
         if(item.Name == "div"){
             var characters = GetInformationScrapy(item.InnerHtml,"//a")
                              .Where(i => i.InnerText != "")
-                             .Select( x=> new Character{ Route = x.Attributes["href"].Value, Name = x.InnerText})
+                             .Select( x=> new CharacterDTO{ Route = x.Attributes["href"].Value, Name = x.InnerText})
                              .ToList();
-            result.Secondaries.Add(new Secondary{
-                Name = secondary,
+            result.Categories.Add(new CategoryDTO{
+                Name = category,
                 Characters = characters
             });
         }
      }
      return result;    
-}
-
-
-static void AddCache<T>(T data, string key) {
-    var cacheEntryOptions = new MemoryCacheEntryOptions().AbsoluteExpiration=DateTime.Now.AddMinutes(1);¡
-    memory.Set<List<T>>("hierarchy",data);
-}
-class Data {
-    public string  Main { get; set; }
-
-    public List<Secondary> Secondaries { get; set; }
-
-    
-}
-
-class Secondary {
-    public string  Name { get; set; }
-
-    public List<Character> Characters {get;set;}
-}
-
-class Character {
-    public string Name { get; set; }
-
-    public string Route { get; set; }
 }
 
 
